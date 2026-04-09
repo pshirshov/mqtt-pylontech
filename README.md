@@ -61,6 +61,10 @@ pylontech-mqtt-adapter <rs485-bridge-host> \
 | `pylontech/module/<addr>/management/state` | Management flags and limits |
 | `homeassistant/<component>/<id>/config` | HA discovery payloads |
 
+## Origin
+
+Extracted from [pshirshov/python-pylontech](https://github.com/pshirshov/python-pylontech), a fork of [Frankkkkk/python-pylontech](https://github.com/Frankkkkk/python-pylontech) which is the original Python library for Pylontech battery communication.
+
 ## Testing
 
 The included test script spawns a local mosquitto instance and runs the adapter:
