@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use rumqttc::{Client, LastWill, MqttOptions, QoS};
+use rumqttc::{Client, Event, Incoming, LastWill, MqttOptions, QoS};
 use serde_json::{Map, Value, json};
 
 use crate::config::MqttConfig;
@@ -432,6 +432,7 @@ pub struct MqttPublisher {
     discovery_prefix: String,
     topic_prefix: String,
     healthy: Arc<AtomicBool>,
+    rediscovery_requested: Arc<AtomicBool>,
     last_error: Arc<Mutex<Option<String>>>,
     stats: Arc<RuntimeStats>,
 }
@@ -454,17 +455,32 @@ impl MqttPublisher {
         }
 
         let (client, mut connection) = Client::new(options, MQTT_REQUEST_CAPACITY);
+
+        let birth_topic = format!("{}/status", config.discovery_prefix);
+        client.subscribe(&birth_topic, QoS::AtLeastOnce)?;
+
         let healthy = Arc::new(AtomicBool::new(true));
+        let rediscovery_requested = Arc::new(AtomicBool::new(false));
         let last_error = Arc::new(Mutex::new(None));
         let healthy_for_thread = Arc::clone(&healthy);
+        let rediscovery_for_thread = Arc::clone(&rediscovery_requested);
         let last_error_for_thread = Arc::clone(&last_error);
         thread::spawn(move || {
             let mut failure_message = "mqtt event loop stopped unexpectedly".to_string();
             for notification in connection.iter() {
-                if let Err(error) = notification {
-                    failure_message = format!("mqtt event loop stopped: {}", error);
-                    eprintln!("{}", failure_message);
-                    break;
+                match notification {
+                    Ok(Event::Incoming(Incoming::Publish(publish)))
+                        if publish.topic == birth_topic && publish.payload.as_ref() == b"online" =>
+                    {
+                        eprintln!("home assistant birth message received, requesting rediscovery");
+                        rediscovery_for_thread.store(true, Ordering::SeqCst);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        failure_message = format!("mqtt event loop stopped: {}", error);
+                        eprintln!("{}", failure_message);
+                        break;
+                    }
                 }
             }
             *last_error_for_thread
@@ -478,11 +494,16 @@ impl MqttPublisher {
             discovery_prefix: config.discovery_prefix.clone(),
             topic_prefix: config.topic_prefix.clone(),
             healthy,
+            rediscovery_requested,
             last_error,
             stats,
         };
         publisher.publish_text(&publisher.availability_topic(), true, "online")?;
         Ok(publisher)
+    }
+
+    pub fn take_rediscovery_request(&self) -> bool {
+        self.rediscovery_requested.swap(false, Ordering::SeqCst)
     }
 
     pub fn ensure_healthy(&self) -> AppResult<()> {

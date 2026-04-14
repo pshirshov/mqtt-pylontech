@@ -78,6 +78,15 @@ fn run_session_inner(
     loop {
         publisher.ensure_healthy()?;
 
+        if publisher.take_rediscovery_request() {
+            eprintln!("re-publishing discovery for {} module(s)", modules.len());
+            publisher.publish_discovery(&modules)?;
+            for module in &modules {
+                let system_parameters = client.get_system_parameters(module.address)?;
+                publisher.publish_system_parameters(module.address, &system_parameters)?;
+            }
+        }
+
         let now = Instant::now();
         if now >= next_management_poll_at {
             for module in &modules {
